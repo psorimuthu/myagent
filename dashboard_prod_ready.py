@@ -36,7 +36,7 @@ INDEX_NAME = "my-rag-index"
 @st.cache_resource
 def setup_infrastructure():
     # Force output dimensions to 1024 to align with your Pinecone cluster setting
-    embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-2-preview", output_dimensionality=1024)
+    embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-2-preview")
     db = PineconeVectorStore(index_name=INDEX_NAME, embedding=embeddings)
     llm = ChatGroq(model="openai/gpt-oss-120b", temperature=0.0)
     search_tool = DuckDuckGoSearchRun()
