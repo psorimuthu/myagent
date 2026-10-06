@@ -24,13 +24,20 @@ st.markdown("This assistant verifies internal document context. If info is missi
 
 PERSIST_DIRECTORY = "./chroma_db"
 
+# Change this:
+# if not os.path.exists(PERSIST_DIRECTORY):
+#     st.error("Database not found!")
+
+# To this smart fallback layer:
 if not os.path.exists(PERSIST_DIRECTORY):
-    st.error(f"Database at `{PERSIST_DIRECTORY}` not found. Ingest files first!")
-    st.stop()
+    st.sidebar.warning("⚠️ Running in ephemeral mode. No local ChromaDB folder detected on host.")
+
 
 # Initialize API credentials
-os.environ["GROQ_API_KEY"] = 
-os.environ["GOOGLE_API_KEY"] =
+# Replace your old os.environ["GROQ_API_KEY"] = "..." lines with these:
+os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
+os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
+
 
 # 2. Define LangGraph State & Infrastructure
 class AgentState(TypedDict):
