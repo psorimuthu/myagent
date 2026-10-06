@@ -1,0 +1,11 @@
+streamlit
+pandas
+numpy
+plotly
+scikit-learn
+langchain-chroma
+langchain-groq
+langchain-google-genai
+langgraph
+duckduckgo-search
+pypdf
