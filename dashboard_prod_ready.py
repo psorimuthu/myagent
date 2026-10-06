@@ -184,20 +184,53 @@ with visual_col:
     st.subheader("Data Cluster Visualization")
     try:
         raw_data = db._collection.get(include=["documents", "embeddings"])
-        total_chunks = len(raw_data["ids"])
         
-        # Pull coordinates out via standard PCA projection
-        pca = PCA(n_components=3)
-        compressed = pca.fit_transform(np.array(raw_data["embeddings"]))
-        
-        df = pd.DataFrame({
-            "Snippet": [doc[:70] + "..." for doc in raw_data["documents"]],
-            "X": compressed[:, 0], "Y": compressed[:, 1], "Z": compressed[:, 2]
-        })
-        
-        fig = px.scatter_3d(df, x="X", y="Y", z="Z", hover_data=["Snippet"], template="plotly_dark")
-        fig.update_traces(marker=dict(size=6, color="#636EFA", opacity=0.8))
-        fig.update_layout(margin=dict(l=0, r=0, b=0, t=0), scene=dict(aspectmode="cube"))
-        st.plotly_chart(fig, use_container_width=True)
+        # 1. CRITICAL GUARD: If the cloud database is completely empty, show an upload message
+        if not raw_data or "ids" not in raw_data or len(raw_data["ids"]) == 0:
+            st.info("💡 **Vector Database is currently empty.** Please type a question in the chat bar to activate fallback loops, or run an indexing script to add your PDF data to this cloud instance!")
+        else:
+            total_chunks = len(raw_data["ids"])
+            base_vectors = list(raw_data["embeddings"])
+            query_node = st.session_state.latest_query_vector
+            
+            all_vectors = np.array(base_vectors + [query_node]) if query_node is not None else np.array(base_vectors)
+            
+            # Reduce dimensionality to 3D coordinate metrics
+            pca = PCA(n_components=3)
+            compressed = pca.fit_transform(all_vectors)
+            
+            doc_coords = compressed[:total_chunks]
+            query_coords = compressed[total_chunks:] if query_node is not None else None
+            
+            table_rows = []
+            for idx in range(total_chunks):
+                status = "Nearest Match" if raw_data["ids"][idx] in st.session_state.matched_ids else "Other Text Chunk"
+                
+                row = {
+                    "Category": status,
+                    "Snippet": raw_data["documents"][idx][:70] + "...",
+                    "X": doc_coords[idx, 0], "Y": doc_coords[idx, 1], "Z": doc_coords[idx, 2]
+                }
+                table_rows.append(row)
+                
+            df = pd.DataFrame(table_rows)
+            
+            fig = px.scatter_3d(
+                df, x="X", y="Y", z="Z", color="Category",
+                color_discrete_map={"Other Text Chunk": "#636EFA", "Nearest Match": "#00CC96"},
+                hover_data=["Snippet"], template="plotly_dark"
+            )
+            
+            if query_coords is not None and len(query_coords) > 0:
+                fig.add_trace(go.Scatter3d(
+                    x=[query_coords[0]], y=[query_coords[1]], z=[query_coords[2]],
+                    mode="markers", marker=dict(size=12, color="#EF553B", symbol="diamond"),
+                    name="Your Active Prompt"
+                ))
+                
+            fig.update_traces(marker=dict(size=6, opacity=0.8))
+            fig.update_layout(margin=dict(l=0, r=0, b=0, t=0), scene=dict(aspectmode="cube"))
+            st.plotly_chart(fig, use_container_width=True)
+            
     except Exception as e:
         st.error(f"Visualization rendering error: {e}")
