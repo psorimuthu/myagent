@@ -220,3 +220,50 @@ with chat_col:
                 st.session_state.ui_chat_history.append(("assistant", snapshot.values.get("generation", "No answer compiled.")))
                 st.rerun()
 
+# --- RIGHT COLUMN: 3D GRAPH VISUALIZATION ---
+with visual_col:
+    st.subheader("Data Cluster Visualization")
+    try:
+        # Fetch up to 100 recent vector points directly from Pinecone using a dummy query vector
+        # This bypasses the need for local session state cache arrays entirely!
+        dummy_vector = [0.0] * 1024  # Aligns with your 1024 index dimension
+        
+        raw_cloud_data = db._index.query(
+            vector=dummy_vector,
+            top_k=100,
+            include_metadata=True,
+            include_values=True
+        )
+
+        # Check if Pinecone returned any matches
+        if not raw_cloud_data or 'matches' not in raw_cloud_data or len(raw_cloud_data['matches']) == 0:
+            st.info("💡 **Vector Database is currently empty.** Please drop a PDF into the sidebar to populate your custom document tracking map!")
+        else:
+            matches = raw_cloud_data['matches']
+            total_chunks = len(matches)
+            
+            if total_chunks < 3:
+                st.warning(f"Indexed {total_chunks}/3 chunks. Upload a slightly larger file or second document to unlock the 3D projection map!")
+            else:
+                # Reconstruct coordinates using the direct vectors returned from Pinecone
+                embeddings_list = [match['values'] for match in matches]
+                snippets = [match['metadata'].get('text', 'Document Chunk')[:70] + "..." for match in matches]
+                
+                embeddings_array = np.array(embeddings_list)
+                
+                # Compress dimensions to visible 3D components
+                pca = PCA(n_components=3)
+                compressed = pca.fit_transform(embeddings_array)
+                
+                df = pd.DataFrame({
+                    "Snippet": snippets,
+                    "X": compressed[:, 0], "Y": compressed[:, 1], "Z": compressed[:, 2]
+                })
+                
+                fig = px.scatter_3d(df, x="X", y="Y", z="Z", hover_data=["Snippet"], template="plotly_dark")
+                fig.update_traces(marker=dict(size=6, color="#00CC96", opacity=0.8))
+                fig.update_layout(margin=dict(l=0, r=0, b=0, t=0), scene=dict(aspectmode="cube"))
+                st.plotly_chart(fig, use_container_width=True)
+                
+    except Exception as e:
+        st.error(f"Visualization rendering error: {e}")
