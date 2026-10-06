@@ -1,5 +1,6 @@
 import os
 import logging
+import tempfile
 from typing import List, Dict, Any
 from typing_extensions import TypedDict
 import streamlit as st
@@ -10,36 +11,26 @@ import plotly.graph_objects as go
 from sklearn.decomposition import PCA
 from langchain_chroma import Chroma
 from langchain_groq import ChatGroq
+from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
-from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.tools.duckduckgo_search.tool import DuckDuckGoSearchRun
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, START, END
 
 # 1. Page Configuration & Layout
 st.set_page_config(page_title="Agentic RAG Control Center", layout="wide")
-st.title("🤖 Agentic RAG Workspace (LangGraph + HITL)")
-st.markdown("This assistant verifies internal document context. If info is missing, it **halts** and asks for your approval before searching the web.")
+st.title("🤖 Agentic RAG Workspace & Live Vector Tracker")
 
 PERSIST_DIRECTORY = "./chroma_db"
 
-# Change this:
-# if not os.path.exists(PERSIST_DIRECTORY):
-#     st.error("Database not found!")
-
-# To this smart fallback layer:
-if not os.path.exists(PERSIST_DIRECTORY):
-    st.sidebar.warning("⚠️ Running in ephemeral mode. No local ChromaDB folder detected on host.")
-
-
-# Initialize API credentials
-# Replace your old os.environ["GROQ_API_KEY"] = "..." lines with these:
+# Secure cloud injection variables
 os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
 os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
 
-
-# 2. Define LangGraph State & Infrastructure
+# 2. Define LangGraph State & Core Elements
 class AgentState(TypedDict):
     question: str
     documents: List[str]
@@ -47,14 +38,20 @@ class AgentState(TypedDict):
     search_needed: bool
 
 @st.cache_resource
-def setup_agent_graph():
+def setup_infrastructure():
     embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-2-preview")
+    # Initialize Chroma to read from our persistent directory
     db = Chroma(persist_directory=PERSIST_DIRECTORY, embedding_function=embeddings)
-    retriever = db.as_retriever(search_kwargs={"k": 2})
     llm = ChatGroq(model="openai/gpt-oss-120b", temperature=0.0)
     search_tool = DuckDuckGoSearchRun()
+    return db, llm, search_tool
 
-    # Define Graph Nodes
+db, llm, search_tool = setup_infrastructure()
+retriever = db.as_retriever(search_kwargs={"k": 2})
+
+@st.cache_resource
+def build_agent_graph():
+    # Define internal compilation steps
     def retrieve_node(state: AgentState):
         matched_docs = retriever.invoke(state["question"])
         return {"documents": [d.page_content for d in matched_docs], "question": state["question"]}
@@ -65,28 +62,20 @@ def setup_agent_graph():
             ("human", f"Context: {state['documents']}\n\nQuestion: {state['question']}")
         ])
         assessment = (grader_prompt | llm | StrOutputParser()).invoke({}).strip().upper()
-        
-        # If the text is relevant, search_needed is False. If not relevant, search_needed is True.
-        is_search_needed = "YES" not in assessment
-        return {"search_needed": is_search_needed}
+        return {"search_needed": "YES" not in assessment}
 
     def web_search_node(state: AgentState):
         print("--- NODE: EXECUTING LIVE WEB SEARCH ---")
         try:
-            # Run the search query normally
             web_results = search_tool.invoke({"query": state["question"]})
             return {"documents": [web_results]}
         except Exception as network_error:
-            print(f"Network error caught: {network_error}")
-            
-            # Fallback snippet passed to the LLM if the cloud network blocks DDG
             error_fallback_text = (
                 "SYSTEM NOTICE: An external network connection block occurred. "
                 "The assistant was unable to pull live data from DuckDuckGo Search because "
                 "the host environment network connection was reset by the peer."
             )
             return {"documents": [error_fallback_text]}
-
 
     def generate_answer_node(state: AgentState):
         qa_prompt = ChatPromptTemplate.from_messages([
@@ -96,25 +85,13 @@ def setup_agent_graph():
         answer = (qa_prompt | llm | StrOutputParser()).invoke({"context": "\n\n".join(state["documents"]), "question": state["question"]})
         return {"generation": answer}
 
-    def grade_documents_node(state: AgentState):
-        grader_prompt = ChatPromptTemplate.from_messages([
-            ("system", "You are a strict data grader. Reply with 'YES' if relevant or 'NO' if it is not."),
-            ("human", f"Context: {state['documents']}\n\nQuestion: {state['question']}")
-        ])
-        assessment = (grader_prompt | llm | StrOutputParser()).invoke({}).strip().upper()
-        
-        # If the text is relevant, search_needed is False. If not relevant, search_needed is True.
-        is_search_needed = "YES" not in assessment
-        return {"search_needed": is_search_needed}
-    
     def decide_next_step(state: AgentState) -> str:
         if state.get("search_needed", True):
             return "web_search"
         else:
             return "generate"
-    
 
-    # Build Graph Pipeline
+    # Assemble Pipeline Logic
     workflow = StateGraph(AgentState)
     workflow.add_node("retrieve", retrieve_node)
     workflow.add_node("grade_docs", grade_documents_node)
@@ -123,161 +100,109 @@ def setup_agent_graph():
 
     workflow.add_edge(START, "retrieve")
     workflow.add_edge("retrieve", "grade_docs")
-    
-    # Python can now find 'decide_next_step' perfectly!
-    workflow.add_conditional_edges(
-        "grade_docs", 
-        decide_next_step, 
-        {"web_search": "web_search", "generate": "generate"}
-    )
+    workflow.add_conditional_edges("grade_docs", decide_next_step, {"web_search": "web_search", "generate": "generate"})
     workflow.add_edge("web_search", "generate")
     workflow.add_edge("generate", END)
 
     memory = MemorySaver()
-    compiled_app = workflow.compile(checkpointer=memory, interrupt_before=["web_search"])
-    return db, compiled_app
+    return workflow.compile(checkpointer=memory, interrupt_before=["web_search"])
 
-db, agent_graph = setup_agent_graph()
+agent_graph = build_agent_graph()
 
 # 3. Streamlit Persistent Session States
 if "ui_chat_history" not in st.session_state:
-    st.session_state.ui_chat_history = []  # Tracks UI visualization list tuples [("user", text), ("assistant", text)]
+    st.session_state.ui_chat_history = []
 if "graph_config" not in st.session_state:
     st.session_state.graph_config = {"configurable": {"thread_id": "streamlit_session_101"}}
 if "awaiting_approval" not in st.session_state:
     st.session_state.awaiting_approval = False
 
 # =====================================================================
+# SIDEBAR DYNAMIC DOCUMENT UPLOADER & INGESTION
+# =====================================================================
+with st.sidebar:
+    st.subheader("📁 Knowledge Base Ingestion")
+    uploaded_file = st.file_uploader("Upload a new PDF to your cloud repository:", type=["pdf"])
+    
+    if uploaded_file is not None:
+        if st.button("🚀 Process & Index Document", use_container_width=True):
+            with st.spinner("Slicing and converting document to vector coordinates..."):
+                # Save the uploaded uploaded file data stream into a temporary storage path
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
+                    tmp_file.write(uploaded_file.getvalue())
+                    tmp_file_path = tmp_file.name
+
+                try:
+                    # Execute standard loader pipeline extraction
+                    loader = PyPDFLoader(tmp_file_path)
+                    raw_docs = loader.load()
+                    
+                    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+                    split_docs = text_splitter.split_documents(raw_docs)
+                    
+                    # Force update the custom structural metadata sources tracking key
+                    for d in split_docs:
+                        d.metadata["source"] = uploaded_file.name
+                        
+                    # Add documents straight into our global active database instance
+                    db.add_documents(split_docs)
+                    st.success(f"Successfully indexed {len(split_docs)} text chunks from '{uploaded_file.name}'!")
+                except Exception as ingest_error:
+                    st.error(f"Ingestion process failed: {ingest_error}")
+                finally:
+                    os.unlink(tmp_file_path) # Clean up file stream paths safely
+                    st.rerun()
+
+# =====================================================================
 # LAYOUT RENDERING: SPLIT WORKSPACE
 # =====================================================================
-chat_col, visual_col = st.columns([1, 1])
+chat_col, visual_col = st.columns()
 
 # --- LEFT COLUMN: CONTROL INTERFACE ---
 with chat_col:
     st.subheader("Interactive Agent Interface")
 
-    # Render persistent conversation feed blocks
     for role, text in st.session_state.ui_chat_history:
         with st.chat_message(role):
             st.write(text)
 
-    # Human Intervention Form (Shows up ONLY when the graph triggers a breakpoint)
     if st.session_state.awaiting_approval:
         st.warning("⚠️ **Agent Interrupted:** The requested data was not found in internal documents. Web search required.")
-        
         with st.form("hitl_form"):
             override_query = st.text_input("Modify the web search query (leave blank to approve original):", "")
-            
             f_col1, f_col2 = st.columns(2)
             approve = f_col1.form_submit_button("✅ Approve Web Search")
             deny = f_col2.form_submit_button("❌ Deny Web Search")
             
             if approve:
                 if override_query.strip() != "":
-                    # Pass BOTH keys so LangGraph doesn't lose the structural state configuration mapping!
-                    agent_graph.update_state(
-                        st.session_state.graph_config, 
-                        {"question": override_query.strip(), "search_needed": True}, 
-                        as_node="grade_docs"
-                    )
+                    agent_graph.update_state(st.session_state.graph_config, {"question": override_query.strip(), "search_needed": True}, as_node="grade_docs")
                     st.session_state.ui_chat_history.append(("assistant", f"✍️ Supervisor updated query to: '{override_query.strip()}'"))
-                
                 with st.spinner("Executing live web search & compiling response..."):
                     for event in agent_graph.stream(None, st.session_state.graph_config, stream_mode="values"):
                         pass
-                
                 final_state = agent_graph.get_state(st.session_state.graph_config)
-                ans = final_state.values.get("generation", "Error compiling response.")
-                st.session_state.ui_chat_history.append(("assistant", ans))
+                st.session_state.ui_chat_history.append(("assistant", final_state.values.get("generation", "Error compiling response.")))
                 st.session_state.awaiting_approval = False
                 st.rerun()
                 
             if deny:
-                # Crucial: Setting search_needed to False routes the agent straight to completion, bypassing web search safely!
-                agent_graph.update_state(
-                    st.session_state.graph_config, 
-                    {"generation": "Web search denied by human supervisor.", "search_needed": False}, 
-                    as_node="grade_docs"
-                )
+                agent_graph.update_state(st.session_state.graph_config, {"generation": "Web search denied by human supervisor.", "search_needed": False}, as_node="grade_docs")
                 st.session_state.ui_chat_history.append(("assistant", "❌ Web search denied by human supervisor."))
                 st.session_state.awaiting_approval = False
                 st.rerun()
 
-
-    # Normal Chat Input Element (Disabled when waiting for human input to prevent overlapping runs)
     if not st.session_state.awaiting_approval:
         if user_input := st.chat_input("Ask a question..."):
             st.session_state.ui_chat_history.append(("user", user_input))
-            
-            # Start running the compiled state graph engine
             with st.spinner("Analyzing document database structures..."):
                 for event in agent_graph.stream({"question": user_input}, st.session_state.graph_config, stream_mode="values"):
                     pass
-            
-            # Evaluate why the stream stopped
             snapshot = agent_graph.get_state(st.session_state.graph_config)
             if snapshot.next:
-                # We hit the web_search breakpoint tripwire!
                 st.session_state.awaiting_approval = True
                 st.rerun()
             else:
-                # Completed successfully within the bounds of ChromaDB data
-                ans = snapshot.values.get("generation", "No answer compiled.")
-                st.session_state.ui_chat_history.append(("assistant", ans))
+                st.session_state.ui_chat_history.append(("assistant", snapshot.values.get("generation", "No answer compiled.")))
                 st.rerun()
 
-# --- RIGHT COLUMN: 3D SPACE GRAPH METRICS ---
-with visual_col:
-    st.subheader("Data Cluster Visualization")
-    try:
-        raw_data = db._collection.get(include=["documents", "embeddings"])
-        
-        # 1. CRITICAL GUARD: If the cloud database is completely empty, show an upload message
-        if not raw_data or "ids" not in raw_data or len(raw_data["ids"]) == 0:
-            st.info("💡 **Vector Database is currently empty.** Please type a question in the chat bar to activate fallback loops, or run an indexing script to add your PDF data to this cloud instance!")
-        else:
-            total_chunks = len(raw_data["ids"])
-            base_vectors = list(raw_data["embeddings"])
-            query_node = st.session_state.latest_query_vector
-            
-            all_vectors = np.array(base_vectors + [query_node]) if query_node is not None else np.array(base_vectors)
-            
-            # Reduce dimensionality to 3D coordinate metrics
-            pca = PCA(n_components=3)
-            compressed = pca.fit_transform(all_vectors)
-            
-            doc_coords = compressed[:total_chunks]
-            query_coords = compressed[total_chunks:] if query_node is not None else None
-            
-            table_rows = []
-            for idx in range(total_chunks):
-                status = "Nearest Match" if raw_data["ids"][idx] in st.session_state.matched_ids else "Other Text Chunk"
-                
-                row = {
-                    "Category": status,
-                    "Snippet": raw_data["documents"][idx][:70] + "...",
-                    "X": doc_coords[idx, 0], "Y": doc_coords[idx, 1], "Z": doc_coords[idx, 2]
-                }
-                table_rows.append(row)
-                
-            df = pd.DataFrame(table_rows)
-            
-            fig = px.scatter_3d(
-                df, x="X", y="Y", z="Z", color="Category",
-                color_discrete_map={"Other Text Chunk": "#636EFA", "Nearest Match": "#00CC96"},
-                hover_data=["Snippet"], template="plotly_dark"
-            )
-            
-            if query_coords is not None and len(query_coords) > 0:
-                fig.add_trace(go.Scatter3d(
-                    x=[query_coords[0]], y=[query_coords[1]], z=[query_coords[2]],
-                    mode="markers", marker=dict(size=12, color="#EF553B", symbol="diamond"),
-                    name="Your Active Prompt"
-                ))
-                
-            fig.update_traces(marker=dict(size=6, opacity=0.8))
-            fig.update_layout(margin=dict(l=0, r=0, b=0, t=0), scene=dict(aspectmode="cube"))
-            st.plotly_chart(fig, use_container_width=True)
-            
-    except Exception as e:
-        st.error(f"Visualization rendering error: {e}")
