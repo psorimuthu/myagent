@@ -13,3 +13,4 @@ langchain-classic
 langgraph
 duckduckgo-search
 pypdf
+ddgs
