@@ -65,7 +65,10 @@ def setup_agent_graph():
             ("human", f"Context: {state['documents']}\n\nQuestion: {state['question']}")
         ])
         assessment = (grader_prompt | llm | StrOutputParser()).invoke({}).strip().upper()
-        return {"search_needed": "YES" not in assessment}
+        
+        # If the text is relevant, search_needed is False. If not relevant, search_needed is True.
+        is_search_needed = "YES" not in assessment
+        return {"search_needed": is_search_needed}
 
     def web_search_node(state: AgentState):
         print("--- NODE: EXECUTING LIVE WEB SEARCH ---")
@@ -93,8 +96,16 @@ def setup_agent_graph():
         answer = (qa_prompt | llm | StrOutputParser()).invoke({"context": "\n\n".join(state["documents"]), "question": state["question"]})
         return {"generation": answer}
 
-    def decide_next_step(state: AgentState) -> str:
-        return "web_search" if state["search_needed"] else "generate"
+    def grade_documents_node(state: AgentState):
+        grader_prompt = ChatPromptTemplate.from_messages([
+            ("system", "You are a strict data grader. Reply with 'YES' if relevant or 'NO' if it is not."),
+            ("human", f"Context: {state['documents']}\n\nQuestion: {state['question']}")
+        ])
+        assessment = (grader_prompt | llm | StrOutputParser()).invoke({}).strip().upper()
+        
+        # If the text is relevant, search_needed is False. If not relevant, search_needed is True.
+        is_search_needed = "YES" not in assessment
+        return {"search_needed": is_search_needed}
 
     # Build Graph Pipeline
     workflow = StateGraph(AgentState)
