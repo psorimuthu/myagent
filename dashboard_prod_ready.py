@@ -202,5 +202,21 @@ with chat_col:
                 st.rerun()
 
     # Normal user chat element input container
+    # Ensure this block uses 4 exact spaces or tabs matching your file's layout indentation
     if not st.session_state.awaiting_approval:
-        if user_input := st.chat_input("Ask a question about your documents..."):
+        user_input = st.chat_input("Ask a question about your documents...")
+        if user_input:
+            st.session_state.ui_chat_history.append(("user", user_input))
+            
+            with st.spinner("Analyzing cloud database structures..."):
+                for event in agent_graph.stream({"question": user_input}, st.session_state.graph_config, stream_mode="values"):
+                    pass
+            
+            snapshot = agent_graph.get_state(st.session_state.graph_config)
+            if snapshot.next:
+                st.session_state.awaiting_approval = True
+                st.rerun()
+            else:
+                st.session_state.ui_chat_history.append(("assistant", snapshot.values.get("generation", "No answer compiled.")))
+                st.rerun()
+
