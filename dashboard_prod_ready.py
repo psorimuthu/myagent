@@ -16,9 +16,10 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.tools.duckduckgo_search.tool import DuckDuckGoSearchRun
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import StateGraph, START, END
+from langchain_community.tools import DuckDuckGoSearchRun
+
 
 # 1. Page Configuration & Layout
 st.set_page_config(page_title="Agentic RAG Control Center", layout="wide")
