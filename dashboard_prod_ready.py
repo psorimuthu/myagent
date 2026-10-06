@@ -226,7 +226,7 @@ with visual_col:
     try:
         # Fetch up to 100 recent vector points directly from Pinecone using a dummy query vector
         # This bypasses the need for local session state cache arrays entirely!
-        dummy_vector = [0.0] * 1024  # Aligns with your 1024 index dimension
+        dummy_vector = [0.0] * 3072  # Aligns with your 3072 index dimension
         
         raw_cloud_data = db._index.query(
             vector=dummy_vector,
