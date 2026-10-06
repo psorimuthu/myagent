@@ -3,9 +3,13 @@ pandas
 numpy
 plotly
 scikit-learn
+langchain
+langchain-core
+langchain-community
 langchain-chroma
 langchain-groq
 langchain-google-genai
+langchain-classic
 langgraph
 duckduckgo-search
 pypdf
