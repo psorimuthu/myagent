@@ -68,8 +68,22 @@ def setup_agent_graph():
         return {"search_needed": "YES" not in assessment}
 
     def web_search_node(state: AgentState):
-        web_results = search_tool.invoke({"query": state["question"]})
-        return {"documents": [web_results]}
+        print("--- NODE: EXECUTING LIVE WEB SEARCH ---")
+        try:
+            # Run the search query normally
+            web_results = search_tool.invoke({"query": state["question"]})
+            return {"documents": [web_results]}
+        except Exception as network_error:
+            print(f"Network error caught: {network_error}")
+            
+            # Fallback snippet passed to the LLM if the cloud network blocks DDG
+            error_fallback_text = (
+                "SYSTEM NOTICE: An external network connection block occurred. "
+                "The assistant was unable to pull live data from DuckDuckGo Search because "
+                "the host environment network connection was reset by the peer."
+            )
+            return {"documents": [error_fallback_text]}
+
 
     def generate_answer_node(state: AgentState):
         qa_prompt = ChatPromptTemplate.from_messages([
