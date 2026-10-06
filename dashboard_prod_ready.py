@@ -106,6 +106,13 @@ def setup_agent_graph():
         # If the text is relevant, search_needed is False. If not relevant, search_needed is True.
         is_search_needed = "YES" not in assessment
         return {"search_needed": is_search_needed}
+    
+    def decide_next_step(state: AgentState) -> str:
+        if state.get("search_needed", True):
+            return "web_search"
+        else:
+            return "generate"
+    
 
     # Build Graph Pipeline
     workflow = StateGraph(AgentState)
@@ -116,7 +123,13 @@ def setup_agent_graph():
 
     workflow.add_edge(START, "retrieve")
     workflow.add_edge("retrieve", "grade_docs")
-    workflow.add_conditional_edges("grade_docs", decide_next_step, {"web_search": "web_search", "generate": "generate"})
+    
+    # Python can now find 'decide_next_step' perfectly!
+    workflow.add_conditional_edges(
+        "grade_docs", 
+        decide_next_step, 
+        {"web_search": "web_search", "generate": "generate"}
+    )
     workflow.add_edge("web_search", "generate")
     workflow.add_edge("generate", END)
 
