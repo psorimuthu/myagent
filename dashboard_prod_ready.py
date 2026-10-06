@@ -9,7 +9,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from sklearn.decomposition import PCA
-from langchain_chroma import Chroma
+from langchain_pinecone import PineconeVectorStore
 from langchain_groq import ChatGroq
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_core.prompts import ChatPromptTemplate
@@ -30,6 +30,7 @@ PERSIST_DIRECTORY = "./chroma_db"
 # Secure cloud injection variables
 os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
 os.environ["GOOGLE_API_KEY"] = st.secrets["GOOGLE_API_KEY"]
+os.environ["PINECONE_API_KEY"] = st.secrets["PINECONE_API_KEY"]
 
 # 2. Define LangGraph State & Core Elements
 class AgentState(TypedDict):
@@ -42,7 +43,7 @@ class AgentState(TypedDict):
 def setup_infrastructure():
     embeddings = GoogleGenerativeAIEmbeddings(model="gemini-embedding-2-preview")
     # Initialize Chroma to read from our persistent directory
-    db = Chroma(persist_directory=PERSIST_DIRECTORY, embedding_function=embeddings)
+    db = PineconeVectorStore(index_name="my-rag-index", embedding=embeddings)
     llm = ChatGroq(model="openai/gpt-oss-120b", temperature=0.0)
     search_tool = DuckDuckGoSearchRun()
     return db, llm, search_tool
