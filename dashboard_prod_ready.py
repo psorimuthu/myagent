@@ -161,11 +161,14 @@ with chat_col:
             
             if approve:
                 if override_query.strip() != "":
-                    # Inject rewritten text state into the thread checkpointer memory
-                    agent_graph.update_state(st.session_state.graph_config, {"question": override_query.strip()}, as_node="grade_docs")
+                    # Pass BOTH keys so LangGraph doesn't lose the structural state configuration mapping!
+                    agent_graph.update_state(
+                        st.session_state.graph_config, 
+                        {"question": override_query.strip(), "search_needed": True}, 
+                        as_node="grade_docs"
+                    )
                     st.session_state.ui_chat_history.append(("assistant", f"✍️ Supervisor updated query to: '{override_query.strip()}'"))
                 
-                # Resume processing from the checkpoint memory
                 with st.spinner("Executing live web search & compiling response..."):
                     for event in agent_graph.stream(None, st.session_state.graph_config, stream_mode="values"):
                         pass
@@ -177,10 +180,16 @@ with chat_col:
                 st.rerun()
                 
             if deny:
-                agent_graph.update_state(st.session_state.graph_config, {"generation": "Web search denied by human supervisor."}, as_node="grade_docs")
+                # Crucial: Setting search_needed to False routes the agent straight to completion, bypassing web search safely!
+                agent_graph.update_state(
+                    st.session_state.graph_config, 
+                    {"generation": "Web search denied by human supervisor.", "search_needed": False}, 
+                    as_node="grade_docs"
+                )
                 st.session_state.ui_chat_history.append(("assistant", "❌ Web search denied by human supervisor."))
                 st.session_state.awaiting_approval = False
                 st.rerun()
+
 
     # Normal Chat Input Element (Disabled when waiting for human input to prevent overlapping runs)
     if not st.session_state.awaiting_approval:
