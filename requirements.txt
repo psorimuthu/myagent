@@ -14,3 +14,4 @@ langgraph
 duckduckgo-search
 pypdf
 ddgs
+langchain_pinecone
