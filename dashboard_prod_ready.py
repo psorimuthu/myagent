@@ -157,7 +157,7 @@ with st.sidebar:
 # =====================================================================
 # LAYOUT RENDERING: SPLIT WORKSPACE
 # =====================================================================
-chat_col, visual_col = st.columns()
+chat_col, visual_col = st.columns(2)
 
 # --- LEFT COLUMN: CONTROL INTERFACE ---
 with chat_col:
